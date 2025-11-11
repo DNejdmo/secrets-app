@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secrets-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: secrets-app
+  template:
+    metadata:
+      labels:
+        app: secrets-app
+    spec:
+      containers:
+        - name: app
+          image: dnejdmo/secrets-app:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: API_KEY
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secrets-app-service
+  namespace: default
+spec:
+  selector:
+    app: secrets-app
+  ports:
+    - port: 80
+      targetPort: 3000
+      nodePort: 30001  # <--- LÄGG TILL
+  type: NodePort    # <--- BYT TILL NodePort
