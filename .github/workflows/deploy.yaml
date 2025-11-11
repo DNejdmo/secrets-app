@@ -35,10 +35,11 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
 
-      - name: Decode kubeconfig
+      - name: Setup kubeconfig
         run: |
-          echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
           mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
 
       - name: Deploy to Minikube
         run: |
