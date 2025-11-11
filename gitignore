@@ -1,0 +1,33 @@
+# Node.js
+node_modules/
+npm-debug.log
+.env
+.env.local
+
+# Kubernetes
+.kube/
+kubeconfig
+*.kubeconfig
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yaml
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+
+# Secrets & config
+secrets/
+*.pem
+*.key
+*.crt
