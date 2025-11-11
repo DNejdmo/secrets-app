@@ -37,9 +37,8 @@ jobs:
 
       - name: Decode kubeconfig
         run: |
-          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
+          echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
           mkdir -p $HOME/.kube
-          cp kubeconfig $HOME/.kube/config
 
       - name: Deploy to Minikube
         run: |
