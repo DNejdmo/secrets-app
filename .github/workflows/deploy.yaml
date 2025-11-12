@@ -22,16 +22,24 @@ jobs:
         run: |
           minikube image build -t secrets-app:latest .
 
-      # --- Installera External Secrets (om inte redan finns) ---
+      # --- Installera External Secrets ---
       - name: Install External Secrets
         run: |
           helm repo add external-secrets https://charts.external-secrets.io
           helm repo update
           helm upgrade --install external-secrets external-secrets/external-secrets \
-            --namespace external-secrets --create-namespace
+            --namespace external-secrets --create-namespace \
+            --wait --timeout=300s
+
+      # --- Vänta på att webhook är redo ---
+      - name: Wait for External Secrets webhook
+        run: |
+          echo "Waiting for external-secrets-webhook to be ready..."
+          kubectl wait --for=condition=available deployment/external-secrets-webhook -n external-secrets --timeout=120s
+          echo "Webhook is ready!"
 
       # --- Applicera manifests ---
-      - name: Deploy to Minikube
+      - name: Deploy manifests
         run: |
           kubectl apply -f k8s-manifests.yaml
           kubectl apply -f app-deployment.yaml
@@ -40,7 +48,7 @@ jobs:
       # --- Verifiera secret ---
       - name: Verify secret injection
         run: |
-          sleep 10
+          sleep 15
           API_KEY=$(kubectl get secret app-secret -n default -o jsonpath='{.data.API_KEY}' | base64 -d)
           if [ "$API_KEY" = "test123" ]; then
             echo "SUCCESS: API_KEY = test123"
