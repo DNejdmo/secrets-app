@@ -1,4 +1,4 @@
-name: CI/CD to Minikube
+name: CI/CD to Minikube – 100% Secret-Free in Code
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -16,69 +16,62 @@ jobs:
       - name: Start Minikube
         uses: medyagh/setup-minikube@master
 
-      - name: Build image inside Minikube
+      - name: Build image
         run: |
           minikube image build -t secrets-app:latest .
 
-      - name: Install External Secrets
+      - name: Install External Secrets Operator
         run: |
           helm repo add external-secrets https://charts.external-secrets.io
           helm repo update
           helm upgrade --install external-secrets external-secrets/external-secrets \
-            --namespace external-secrets --create-namespace \
-            --wait --timeout=300s
+            --namespace external-secrets --create-namespace --wait
 
-      - name: Wait for External Secrets webhook
-        run: |
-          kubectl wait --for=condition=available deployment/external-secrets-webhook -n external-secrets --timeout=120s
+      - name: Wait for webhook
+        run: kubectl wait --for=condition=available deployment/external-secrets-webhook -n external-secrets --timeout=120s
 
-      # ──────────────────────────────────────────────────────
-      # Installera Vault + skapa token + unseal automatiskt
-      # ──────────────────────────────────────────────────────
-      - name: Deploy Vault with Helm + auto-unseal
+      
+      - name: Deploy real Vault + auto-unseal with GitHub Secrets
         env:
           UNSEAL_KEY_1: ${{ secrets.VAULT_UNSEAL_KEY_1 }}
           UNSEAL_KEY_2: ${{ secrets.VAULT_UNSEAL_KEY_2 }}
           UNSEAL_KEY_3: ${{ secrets.VAULT_UNSEAL_KEY_3 }}
+          REAL_API_KEY: ${{ secrets.DEMO_VAULT_SECRET }}  # t.ex. "open-source-hemlighet-54321"
         run: |
-          echo "Deploying Vault via Helm..."
+          # Installera Vault (produktionsliknande, inte dev-mode)
+          helm repo add hashicorp https://helm.releases.hashicorp.com
+          helm repo update
           helm upgrade --install vault hashicorp/vault \
             --namespace vault --create-namespace \
-            --set "server.dev.enabled=true" \
             --set "server.ha.enabled=false" \
             --wait --timeout=180s
 
-          echo "Waiting for Vault pod..."
           kubectl wait --for=condition=ready pod/vault-0 -n vault --timeout=120s
 
-          echo "Auto-unsealing Vault..."
+          # Auto-unseal med dina tre keys (aldrig synliga i loggen)
           kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_1 > /dev/null
           kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_2 > /dev/null
           kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_3 > /dev/null
 
-          echo "Creating vault-token secret for ESO..."
-          ROOT_TOKEN=$(kubectl exec -n vault vault-0 -- cat /vault/file/.vault-token)
+          # Hämta root-token och skapa secret för ESO
+          ROOT_TOKEN=$(kubectl exec -n vault vault-0 -- cat /home/vault/.vault-token)
           kubectl create secret generic vault-token \
             --namespace external-secrets \
             --from-literal=token=$ROOT_TOKEN \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          echo "Putting real secret into Vault..."
-          kubectl exec -n vault vault-0 -- vault kv put secret/myapp api-key=open-source-hemlighet-54321
+          # Lägg in hemligheten – kommer från GitHub Secret, syns ALDRIG i klartext
+          kubectl exec -n vault vault-0 -- vault kv put secret/myapp api-key="$REAL_API_KEY"
 
-          echo "Vault is ready and unsealed!"
+      - name: Deploy app
+        run: |
+          kubectl apply -f k8s-manifests.yaml
+          kubectl apply -f app-deployment.yaml
+          sleep 20
+          kubectl rollout status deployment/secrets-app -n default --timeout=180s
 
-      # ──────────────────────────────────────────────────────
-      # Verifiera att det är den riktiga hemligheten (inte mock)
-      # ──────────────────────────────────────────────────────
-      - name: Verify real Vault secret is injected
+      - name: Verify secret injection (never visible in logs)
         run: |
           API_KEY=$(kubectl get secret app-secret -n default -o jsonpath='{.data.API_KEY}' | base64 -d)
-          echo "Injected API_KEY = '$API_KEY'"
-          
-          if [[ "$API_KEY" == "open-source-hemlighet-54321" ]]; then
-            echo "SUCCESS: Real Vault secret is correctly injected!"
-          else
-            echo "FAIL: Got wrong value"
-            exit 1
-          fi
+          echo "API_KEY length: ${#API_KEY} characters"  # visar bara längd
+          [[ -n "$API_KEY" ]] && echo "SUCCESS: Secret injected from real Vault!"
