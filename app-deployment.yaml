@@ -36,5 +36,5 @@ spec:
   ports:
     - port: 80
       targetPort: 3000
-      nodePort: 30001  # <--- LÄGG TILL
-  type: NodePort    # <--- BYT TILL NodePort
+      nodePort: 30001  
+  type: NodePort    

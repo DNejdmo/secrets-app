@@ -51,7 +51,7 @@ jobs:
           sleep 15
           API_KEY=$(kubectl get secret app-secret -n default -o jsonpath='{.data.API_KEY}' | base64 -d)
           if [ "$API_KEY" = "test123" ]; then
-            echo "SUCCESS: API_KEY = test123"
+            echo "SUCCESS: API_KEY = SET"
           else
             echo "FAIL: API_KEY = $API_KEY"
             exit 1
