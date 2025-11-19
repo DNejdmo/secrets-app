@@ -35,27 +35,29 @@ jobs:
       # ──────────────────────────────────────────────────────
       # Installera Vault + skapa token + unseal automatiskt
       # ──────────────────────────────────────────────────────
-      - name: Deploy Vault + auto-unseal with GitHub secrets
+      - name: Deploy Vault with Helm + auto-unseal
         env:
           UNSEAL_KEY_1: ${{ secrets.VAULT_UNSEAL_KEY_1 }}
           UNSEAL_KEY_2: ${{ secrets.VAULT_UNSEAL_KEY_2 }}
           UNSEAL_KEY_3: ${{ secrets.VAULT_UNSEAL_KEY_3 }}
-          VAULT_ROOT_TOKEN: ${{ secrets.VAULT_ROOT_TOKEN }}  # Backup if needed
         run: |
-          echo "Deploying Vault..."
-          kubectl apply -f https://raw.githubusercontent.com/hashicorp/vault-helm/main/examples/minikube/vault-dev.yaml
+          echo "Deploying Vault via Helm..."
+          helm upgrade --install vault hashicorp/vault \
+            --namespace vault --create-namespace \
+            --set "server.dev.enabled=true" \
+            --set "server.ha.enabled=false" \
+            --wait --timeout=180s
 
           echo "Waiting for Vault pod..."
-          kubectl wait --for=condition=ready pod/vault-0 -n vault --timeout=180s
+          kubectl wait --for=condition=ready pod/vault-0 -n vault --timeout=120s
 
           echo "Auto-unsealing Vault..."
-          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_1
-          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_2
-          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_3
+          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_1 > /dev/null
+          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_2 > /dev/null
+          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_3 > /dev/null
 
           echo "Creating vault-token secret for ESO..."
-          # Hämta root-token från podden och lägg i secret
-          ROOT_TOKEN=$(kubectl exec -n vault vault-0 -- cat /home/vault/.vault-token)
+          ROOT_TOKEN=$(kubectl exec -n vault vault-0 -- cat /vault/file/.vault-token)
           kubectl create secret generic vault-token \
             --namespace external-secrets \
             --from-literal=token=$ROOT_TOKEN \
@@ -64,18 +66,7 @@ jobs:
           echo "Putting real secret into Vault..."
           kubectl exec -n vault vault-0 -- vault kv put secret/myapp api-key=open-source-hemlighet-54321
 
-      # ──────────────────────────────────────────────────────
-      # Deploya appen och vänta
-      # ──────────────────────────────────────────────────────
-      - name: Deploy application
-        run: |
-          kubectl apply -f k8s-manifests.yaml
-          kubectl apply -f app-deployment.yaml
-
-          echo "Waiting for External Secrets to sync from Vault..."
-          sleep 20
-
-          kubectl rollout status deployment/secrets-app -n default --timeout=180s
+          echo "Vault is ready and unsealed!"
 
       # ──────────────────────────────────────────────────────
       # Verifiera att det är den riktiga hemligheten (inte mock)
