@@ -13,16 +13,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # --- Starta Minikube ---
       - name: Start Minikube
         uses: medyagh/setup-minikube@master
 
-      # --- Bygg Docker image INUTI Minikube ---
       - name: Build image inside Minikube
         run: |
           minikube image build -t secrets-app:latest .
 
-      # --- Installera External Secrets ---
       - name: Install External Secrets
         run: |
           helm repo add external-secrets https://charts.external-secrets.io
@@ -31,28 +28,66 @@ jobs:
             --namespace external-secrets --create-namespace \
             --wait --timeout=300s
 
-      # --- Vänta på att webhook är redo ---
       - name: Wait for External Secrets webhook
         run: |
-          echo "Waiting for external-secrets-webhook to be ready..."
           kubectl wait --for=condition=available deployment/external-secrets-webhook -n external-secrets --timeout=120s
-          echo "Webhook is ready!"
 
-      # --- Applicera manifests ---
-      - name: Deploy manifests
+      # ──────────────────────────────────────────────────────
+      # Installera Vault + skapa token + unseal automatiskt
+      # ──────────────────────────────────────────────────────
+      - name: Deploy Vault + auto-unseal with GitHub secrets
+        env:
+          UNSEAL_KEY_1: ${{ secrets.VAULT_UNSEAL_KEY_1 }}
+          UNSEAL_KEY_2: ${{ secrets.VAULT_UNSEAL_KEY_2 }}
+          UNSEAL_KEY_3: ${{ secrets.VAULT_UNSEAL_KEY_3 }}
+          VAULT_ROOT_TOKEN: ${{ secrets.VAULT_ROOT_TOKEN }}  # Backup if needed
+        run: |
+          echo "Deploying Vault..."
+          kubectl apply -f https://raw.githubusercontent.com/hashicorp/vault-helm/main/examples/minikube/vault-dev.yaml
+
+          echo "Waiting for Vault pod..."
+          kubectl wait --for=condition=ready pod/vault-0 -n vault --timeout=180s
+
+          echo "Auto-unsealing Vault..."
+          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_1
+          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_2
+          kubectl exec -n vault vault-0 -- vault operator unseal $UNSEAL_KEY_3
+
+          echo "Creating vault-token secret for ESO..."
+          # Hämta root-token från podden och lägg i secret
+          ROOT_TOKEN=$(kubectl exec -n vault vault-0 -- cat /home/vault/.vault-token)
+          kubectl create secret generic vault-token \
+            --namespace external-secrets \
+            --from-literal=token=$ROOT_TOKEN \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "Putting real secret into Vault..."
+          kubectl exec -n vault vault-0 -- vault kv put secret/myapp api-key=open-source-hemlighet-54321
+
+      # ──────────────────────────────────────────────────────
+      # Deploya appen och vänta
+      # ──────────────────────────────────────────────────────
+      - name: Deploy application
         run: |
           kubectl apply -f k8s-manifests.yaml
           kubectl apply -f app-deployment.yaml
-          kubectl rollout status deployment secrets-app -n default --timeout=120s
 
-      # --- Verifiera secret ---
-      - name: Verify secret injection
+          echo "Waiting for External Secrets to sync from Vault..."
+          sleep 20
+
+          kubectl rollout status deployment/secrets-app -n default --timeout=180s
+
+      # ──────────────────────────────────────────────────────
+      # Verifiera att det är den riktiga hemligheten (inte mock)
+      # ──────────────────────────────────────────────────────
+      - name: Verify real Vault secret is injected
         run: |
-          sleep 15
           API_KEY=$(kubectl get secret app-secret -n default -o jsonpath='{.data.API_KEY}' | base64 -d)
-          if [ "$API_KEY" = "test123" ]; then
-            echo "SUCCESS: API_KEY = SET"
+          echo "Injected API_KEY = '$API_KEY'"
+          
+          if [[ "$API_KEY" == "open-source-hemlighet-54321" ]]; then
+            echo "SUCCESS: Real Vault secret is correctly injected!"
           else
-            echo "FAIL: API_KEY = $API_KEY"
+            echo "FAIL: Got wrong value"
             exit 1
           fi
