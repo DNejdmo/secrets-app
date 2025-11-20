@@ -2,10 +2,6 @@
 
 En komplett demo som visar hur man lagrar riktiga hemligheter i **HashiCorp Vault (AES-256-krypterade)** och automatiskt synkar dem till en Node.js-app i Kubernetes – helt utan att hemligheter någonsin ligger i Git.
 
-## Arkitektur – så här fungerar det
-
-![Secrets Flow](images/secrets-flow.svg)
-
 ### Flödesbeskrivning
 1. Hemligheten lagras **krypterad med AES-256** i HashiCorp Vault  
 2. External Secrets Operator läser hemligheten med root-token  
